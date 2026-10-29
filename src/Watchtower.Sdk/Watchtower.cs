@@ -46,12 +46,20 @@ public sealed class Config
     public string Service { get; }
     public string Endpoint { get; }
     public IReadOnlyDictionary<string, object> Resource { get; }
+    public string? Environment { get; }
+    public string? Release { get; }
+    /// <summary>Max spans held in memory while the endpoint is unreachable.</summary>
+    public int BufferSize { get; }
     /// <summary>Returns the new value, or null to drop the attribute.</summary>
     public Func<string, object?, object?>? Redactor { get; }
 
     public Config(string service, string? endpoint = null, string? key = null,
-        IReadOnlyDictionary<string, object>? resource = null, Func<string, object?, object?>? redactor = null)
+        IReadOnlyDictionary<string, object>? resource = null, Func<string, object?, object?>? redactor = null,
+        string? environment = null, string? release = null, int bufferSize = 2048)
     {
+        Environment = environment;
+        Release = release;
+        BufferSize = bufferSize;
         Service = service;
         Endpoint = (endpoint ?? DefaultEndpoint).TrimEnd('/');
         _key = key;
@@ -59,17 +67,30 @@ public sealed class Config
         Redactor = redactor;
     }
 
-    /// <summary>Reads WT_ENDPOINT and WT_INGEST_KEY.</summary>
-    public static Config FromEnv(string service)
+    /// <summary>Reads WT_SERVICE (used when <paramref name="service"/> is null), WT_OTLP_ENDPOINT
+    /// (WT_ENDPOINT is a deprecated alias), WT_INGEST_KEY, WT_ENVIRONMENT, WT_RELEASE.</summary>
+    public static Config FromEnv(string? service = null)
     {
-        static string? Get(string k) => Environment.GetEnvironmentVariable(k) is { Length: > 0 } v ? v : null;
-        return new Config(service, Get("WT_ENDPOINT"), Get("WT_INGEST_KEY"));
+        static string? Get(string k) => System.Environment.GetEnvironmentVariable(k) is { Length: > 0 } v ? v : null;
+        return new Config(service ?? Get("WT_SERVICE") ?? "unknown_service",
+            Get("WT_OTLP_ENDPOINT") ?? Get("WT_ENDPOINT"), Get("WT_INGEST_KEY"),
+            environment: Get("WT_ENVIRONMENT"), release: Get("WT_RELEASE"));
+    }
+
+    /// <summary>Points an OTLP exporter at this config for one signal ("traces" or "logs").</summary>
+    public void Apply(OtlpExporterOptions o, string signal)
+    {
+        o.Endpoint = new Uri($"{Endpoint}/v1/{signal}");
+        o.Protocol = OtlpExportProtocol.HttpProtobuf;
+        if (Headers.Length > 0) o.Headers = Headers;
     }
 
     public string Headers => _key is null ? "" : $"authorization=Bearer {_key}";
 
     public Dictionary<string, object> ResourceAttributes() =>
         new Dictionary<string, object> { ["service.name"] = Service }
+            .Concat(Environment is null ? [] : [new KeyValuePair<string, object>("deployment.environment", Environment)])
+            .Concat(Release is null ? [] : [new KeyValuePair<string, object>("service.version", Release)])
             .Concat(Redaction.DropReserved(Resource)).ToDictionary(p => p.Key, p => p.Value);
 
     // The key must never reach logs.
@@ -119,17 +140,20 @@ public static class Watchtower
 {
     public const string SourceName = "Watchtower";
 
+    /// <summary>Resource, sources (plus "Watchtower"), redaction, and an OTLP/HTTP export that
+    /// buffers failed batches in memory and retries them on the next export.</summary>
+    public static TracerProviderBuilder AddWatchtower(this TracerProviderBuilder b, Config cfg, params string[] sources)
+    {
+        var otlp = new OtlpExporterOptions();
+        cfg.Apply(otlp, "traces");
+        return b.ConfigureResource(r => r.AddAttributes(cfg.ResourceAttributes()))
+            .AddSource(sources.Append(SourceName).Distinct().ToArray())
+            .AddProcessor(new RedactingProcessor(cfg.Redactor))
+            .AddProcessor(new BatchActivityExportProcessor(
+                new BufferingExporter(new OtlpTraceExporter(otlp), new OfflineBuffer<Activity>(cfg.BufferSize))));
+    }
+
     /// <summary>Builds a TracerProvider exporting OTLP/HTTP to Watchtower. Dispose it on shutdown.</summary>
     public static TracerProvider Init(Config cfg, params string[] sources) =>
-        Sdk.CreateTracerProviderBuilder()
-            .ConfigureResource(r => r.AddAttributes(cfg.ResourceAttributes()))
-            .AddSource(sources.Length == 0 ? [SourceName] : sources)
-            .AddProcessor(new RedactingProcessor(cfg.Redactor))
-            .AddOtlpExporter(o =>
-            {
-                o.Endpoint = new Uri($"{cfg.Endpoint}/v1/traces");
-                o.Protocol = OtlpExportProtocol.HttpProtobuf;
-                if (cfg.Headers.Length > 0) o.Headers = cfg.Headers;
-            })
-            .Build();
+        Sdk.CreateTracerProviderBuilder().AddWatchtower(cfg, sources).Build();
 }

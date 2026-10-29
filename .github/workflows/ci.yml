@@ -16,3 +16,4 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - run: dotnet test tests/Watchtower.Sdk.Tests
+      - run: dotnet build examples/MinimalApi
