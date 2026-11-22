@@ -19,7 +19,7 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet test tests/Watchtower.Sdk.Tests
       - run: dotnet pack src/Watchtower.Sdk -c Release -o out
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'out/*.nupkg'
       - name: GitHub release
