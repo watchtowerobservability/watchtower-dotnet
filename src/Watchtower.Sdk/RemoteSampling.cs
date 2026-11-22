@@ -13,7 +13,8 @@ namespace Watchtower;
 /// what is kept. Wrap it in <see cref="ParentBasedSampler"/>.</summary>
 public sealed class RemoteSampler : Sampler, IDisposable
 {
-    private volatile JsonElement _cfg;
+    private volatile Cfg? _cfg; // boxed: a JsonElement struct cannot be volatile and may tear
+    private sealed record Cfg(JsonElement E);
     private string _etag = "";
     private readonly string _endpoint, _key, _service, _env;
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
@@ -45,7 +46,7 @@ public sealed class RemoteSampler : Sampler, IDisposable
             if (!res.IsSuccessStatusCode) return;
             var body = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
             if (body.Length > 1 << 20) return;
-            _cfg = JsonDocument.Parse(body).RootElement.Clone();
+            _cfg = new Cfg(JsonDocument.Parse(body).RootElement.Clone());
             _etag = res.Headers.ETag?.ToString() ?? "";
         }
         catch (Exception)
@@ -54,7 +55,7 @@ public sealed class RemoteSampler : Sampler, IDisposable
         }
     }
 
-    internal void SetConfig(string json) => _cfg = JsonDocument.Parse(json).RootElement.Clone();
+    internal void SetConfig(string json) => _cfg = new Cfg(JsonDocument.Parse(json).RootElement.Clone());
 
     /// <summary>fnv64a over the 16 trace-id bytes, as a fraction of 2^64.</summary>
     internal static double TraceFraction(ReadOnlySpan<byte> id)
@@ -107,7 +108,7 @@ public sealed class RemoteSampler : Sampler, IDisposable
 
     public override SamplingResult ShouldSample(in SamplingParameters p)
     {
-        var r = RatioFor(_cfg, _service, _env, p.Name, p.Tags);
+        var r = RatioFor(_cfg?.E ?? default, _service, _env, p.Name, p.Tags);
         Span<byte> id = stackalloc byte[16];
         p.TraceId.CopyTo(id);
         return r >= 1 || (r > 0 && TraceFraction(id) < r)
