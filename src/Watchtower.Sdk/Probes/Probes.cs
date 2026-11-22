@@ -54,6 +54,8 @@ public sealed class ProbeSet
     private readonly string _endpoint, _key, _query;
     private readonly Action<string, Dictionary<string, string>> _emit;
     private readonly Func<long> _nowMs;
+    /// <summary>The last swallowed patch or prefix failure, for diagnostics (never thrown into the app).</summary>
+    internal static string? LastError;
     private readonly Harmony? _harmony;
     private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     private string _etag = "";
@@ -105,7 +107,7 @@ public sealed class ProbeSet
             foreach (var m in Resolve(l))
             {
                 ByMethod.AddOrUpdate(m, _ => new List<Live> { l }, (_, list) => { list.Add(l); return list; });
-                try { _harmony.Patch(m, prefix: prefix, finalizer: finalizer); } catch (Exception) { ByMethod.TryRemove(m, out _); }
+                try { _harmony.Patch(m, prefix: prefix, finalizer: finalizer); } catch (Exception e) { LastError = $"patch {m.DeclaringType}.{m.Name}: {e}"; ByMethod.TryRemove(m, out _); }
             }
         }
     }
@@ -163,9 +165,9 @@ public sealed class ProbeSet
                 }
             }
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            // the app must never fail because of a probe
+            LastError = $"prefix: {e}"; // the app must never fail because of a probe
         }
     }
 

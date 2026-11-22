@@ -43,7 +43,7 @@ public class ProbesTests
         shop.Checkout(new Trap(), 5); // condition false
         s.Set(Array.Empty<JsonElement>());
         shop.Checkout(new Trap(), 50); // unpatched
-        Assert.Equal(2, events.Count);
+        Assert.True(events.Count == 2, $"events={events.Count} last={ProbeSet.LastError}");
         Assert.Equal("p1", events[0]["probe.id"]);
         Assert.Equal("50", events[0]["code.snapshot.total"]);
         Assert.Equal("7", events[0]["code.snapshot.user._id"]);
