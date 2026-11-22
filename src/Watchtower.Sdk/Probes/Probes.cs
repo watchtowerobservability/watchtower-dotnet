@@ -31,7 +31,7 @@ public sealed class ProbeSet
 {
     private const int ValueMax = 1024;
     private const int MaxFields = 50;
-    private static readonly string[] Refused = { "System.", "Microsoft.", "HarmonyLib.", "MonoMod.", "Watchtower.", "OpenTelemetry." };
+    private static readonly string[] Refused = { "System.", "Microsoft.", "HarmonyLib.", "MonoMod.", "OpenTelemetry." };
     private static ProbeSet? _active;
     private static readonly ConcurrentDictionary<MethodBase, List<Live>> ByMethod = new();
     private static readonly ActivitySource Source = new("Watchtower");
@@ -121,7 +121,8 @@ public sealed class ProbeSet
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             var t = asm.GetType(typeName, throwOnError: false);
-            if (t is null) continue;
+            // the SDK itself is off limits by assembly, not by namespace: user code may live under Watchtower.*
+            if (t is null || t.Assembly == typeof(ProbeSet).Assembly) continue;
             const BindingFlags all = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
             foreach (var m in t.GetMethods(all))
                 if (m.Name == method && !m.IsAbstract && !m.ContainsGenericParameters) yield return m;
