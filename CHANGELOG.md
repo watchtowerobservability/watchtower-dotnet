@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Sync with the monorepo: log code location, remote sampling, code origin, in-app WAF and embedded store metrics.
+
+- Metrics: `MeterProviderBuilder.AddWatchtower` (OTLP/HTTP periodic export, delta temporality by default, `OpenTelemetry.Instrumentation.Runtime`), wired into `services.AddWatchtower()` with ASP.NET Core and HttpClient metrics, and `Signals.InitMetrics` for console apps.
+- Logs: `Signals.CreateLoggerFactory` for ILogger outside ASP.NET Core. `WATCHTOWER_LOGS` / `WATCHTOWER_METRICS` switch the two signals (default on).
+- `WT_SPOOL_DIR` turns on the OTLP exporter's disk retry for traces, logs and metrics.
+
 ## 0.1.0
 
 - OTLP/HTTP trace export over the OpenTelemetry .NET SDK with `Authorization: Bearer` key, `wt.*`-safe attributes and redaction hook.

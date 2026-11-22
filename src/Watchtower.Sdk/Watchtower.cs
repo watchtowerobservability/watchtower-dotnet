@@ -77,7 +77,7 @@ public sealed class Config
             environment: Get("WT_ENVIRONMENT"), release: Get("WT_RELEASE"));
     }
 
-    /// <summary>Points an OTLP exporter at this config for one signal ("traces" or "logs").</summary>
+    /// <summary>Points an OTLP exporter at this config for one signal ("traces", "logs" or "metrics").</summary>
     public void Apply(OtlpExporterOptions o, string signal)
     {
         o.Endpoint = new Uri($"{Endpoint}/v1/{signal}");
@@ -86,6 +86,8 @@ public sealed class Config
     }
 
     public string Headers => _key is null ? "" : $"authorization=Bearer {_key}";
+
+    internal string? Key => _key;
 
     public Dictionary<string, object> ResourceAttributes() =>
         new Dictionary<string, object> { ["service.name"] = Service }
@@ -146,14 +148,25 @@ public static class Watchtower
     {
         var otlp = new OtlpExporterOptions();
         cfg.Apply(otlp, "traces");
-        return b.ConfigureResource(r => r.AddAttributes(cfg.ResourceAttributes()))
-            .AddSource(sources.Append(SourceName).Distinct().ToArray())
-            .AddProcessor(new RedactingProcessor(cfg.Redactor))
+        b = b.ConfigureResource(r => r.AddAttributes(cfg.ResourceAttributes()))
+            .AddSource(sources.Append(SourceName).Distinct().ToArray());
+        static bool On(string v) => System.Environment.GetEnvironmentVariable(v) == "1";
+        if (On("WT_CODE_ORIGIN")) b = b.AddProcessor(new CodeOriginProcessor());
+        if (On("WT_REMOTE_SAMPLING")) // default off: SDK-dropped spans never reach the gateway's exact counts
+        {
+            var every = int.TryParse(System.Environment.GetEnvironmentVariable("WT_SAMPLING_INTERVAL_S"), out var n) && n > 0 ? n : 30;
+            b = b.SetSampler(new ParentBasedSampler(new RemoteSampler(cfg.Endpoint, cfg.Key, cfg.Service, cfg.Environment, TimeSpan.FromSeconds(every))));
+        }
+        if (AllocationProcessor.Enabled) b = b.AddProcessor(new AllocationProcessor()); // before export
+        return b.AddProcessor(new RedactingProcessor(cfg.Redactor))
             .AddProcessor(new BatchActivityExportProcessor(
                 new BufferingExporter(new OtlpTraceExporter(otlp), new OfflineBuffer<Activity>(cfg.BufferSize))));
     }
 
     /// <summary>Builds a TracerProvider exporting OTLP/HTTP to Watchtower. Dispose it on shutdown.</summary>
-    public static TracerProvider Init(Config cfg, params string[] sources) =>
-        Sdk.CreateTracerProviderBuilder().AddWatchtower(cfg, sources).Build();
+    public static TracerProvider Init(Config cfg, params string[] sources)
+    {
+        Signals.UseSpoolFromEnv();
+        return Sdk.CreateTracerProviderBuilder().AddWatchtower(cfg, sources).Build();
+    }
 }

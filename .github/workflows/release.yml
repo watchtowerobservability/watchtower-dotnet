@@ -27,3 +27,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" out/*.nupkg --generate-notes --verify-tag
       - run: dotnet nuget push 'out/*.nupkg' --source https://nuget.pkg.github.com/watchtowerobservability/index.json --api-key ${{ github.token }}
+      # NuGet.org: runs only when the owner has set NUGET_API_KEY.
+      - name: NuGet.org
+        if: ${{ env.NUGET_API_KEY != '' }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push 'out/*.nupkg' --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
